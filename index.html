@@ -3,11 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Experiencia 3D Inmersiva</title>
+    <title>Experiencia 3D Táctil</title>
     <style>
-        /* === ESTILOS GENERALES === */
         body {
-            background-color: #000; /* Fondo totalmente negro */
+            background-color: #000;
             margin: 0;
             height: 100vh;
             width: 100vw;
@@ -18,84 +17,50 @@
             font-family: sans-serif;
         }
 
-        /* === PANTALLA DE INICIO (OVERLAY) === */
+        /* PANTALLA DE INICIO */
         #intro-overlay {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background-color: #000;
-            z-index: 999; /* Por encima de todo */
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: #000; z-index: 999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
             transition: opacity 0.5s ease;
         }
 
         #start-btn {
-            background: transparent;
-            color: white;
-            border: 2px solid white;
-            padding: 15px 40px;
-            font-size: 1.2rem;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            cursor: pointer;
+            background: transparent; color: white; border: 2px solid white;
+            padding: 15px 40px; font-size: 1.2rem; text-transform: uppercase;
+            letter-spacing: 2px; cursor: pointer; border-radius: 50px;
             transition: all 0.3s;
-            border-radius: 50px;
         }
 
-        #start-btn:hover {
-            background: white;
-            color: black;
-            box-shadow: 0 0 20px rgba(255,255,255,0.5);
-        }
+        #start-btn:hover { background: white; color: black; box-shadow: 0 0 20px rgba(255,255,255,0.5); }
 
-        /* === CONTENEDOR DEL VISOR === */
+        /* CONTENEDOR PRINCIPAL */
         .viewer-container {
             position: relative;
-            
-            /* DIMENSIONES Y PROPORCIÓN 1.56 */
-            width: 100%;            
-            max-width: 100%;      
-            /* En pantalla completa queremos aprovechar todo, pero manteniendo el ratio si es posible
-               o dejamos que el CSS object-fit haga el trabajo sucio */
+            width: 100%; max-width: 100%;
             aspect-ratio: 1.56 / 1; 
-            
             background-color: #000;
-            
-            /* Interacción */
-            cursor: grab; 
-            touch-action: none; 
-            user-select: none;
+            cursor: grab; touch-action: none; user-select: none;
             -webkit-tap-highlight-color: transparent; 
-            opacity: 0; /* Empieza invisible hasta que damos click */
-            transition: opacity 1s ease;
+            opacity: 0; transition: opacity 1s ease;
+            /* Eliminada la perspectiva 3D */
+            overflow: hidden;
         }
 
-        /* Cuando está activo se ve */
-        .viewer-container.active {
-            opacity: 1;
-        }
+        .viewer-container.active { opacity: 1; }
+        .viewer-container:active { cursor: grabbing; }
 
-        .viewer-container:active {
-            cursor: grabbing;
-        }
-
-        /* === IMAGEN (RENDER) === */
+        /* IMAGEN */
         #product-image {
-            width: 100%;
-            height: 100%;
-            object-fit: fill; /* ESTIRA LA IMAGEN PARA LLENAR EL HUECO */
-            display: block;
-            pointer-events: none; 
-            -webkit-user-drag: none;
+            width: 100%; height: 100%;
+            object-fit: fill; 
+            display: block; pointer-events: none; -webkit-user-drag: none;
+            transform-origin: center center;
+            /* El transform inicial es escala 1 */
+            transform: scale(1);
         }
 
-        /* === SOLO MODO DEMO === */
-        #demo-canvas {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; pointer-events: none;
-        }
+        #demo-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -106,7 +71,7 @@
 
     <div class="viewer-container" id="container">
         <canvas id="demo-canvas"></canvas>
-        <img id="product-image" src="" alt="Modelo 3D" onerror="activarModoDemo()">
+        <img id="product-image" src="" alt="Modelo 3D">
     </div>
 
     <script>
@@ -119,11 +84,10 @@
             folderPath: "renders/", 
             filePrefix: "modelo",   
             fileExtension: ".jpg",  
+            sensitivity: 65,
             
-            // AJUSTE DE PESO: 
-            // 65 píxeles de arrastre = 1 cambio de imagen.
-            // Antes era 15. Ahora es más de 4 veces más pesado.
-            sensitivity: 65    
+            // NUEVA CONFIGURACIÓN DE ZOOM
+            activeZoom: 1.08  // El tope de zoom al arrastrar (1.08 = 8% más grande)
         };
 
         // ==========================================
@@ -135,33 +99,38 @@
             isDragging: false,
             startX: 0,
             startY: 0,
-            initialIndexX: 0,
-            initialIndexY: 0
+            accumulatedDragX: 0, 
+            accumulatedDragY: 0,
+            lastFrameX: -1, 
+            lastFrameY: -1
         };
 
         const container = document.getElementById('container');
         const imgElement = document.getElementById('product-image');
         const demoCanvas = document.getElementById('demo-canvas');
         const introOverlay = document.getElementById('intro-overlay');
+        let demoActive = false;
 
         // ==========================================
-        // FUNCION PANTALLA COMPLETA
+        // MANEJO DE CARGA
+        // ==========================================
+        imgElement.onload = function() {
+            demoActive = false;
+            demoCanvas.style.display = 'none';
+            imgElement.style.display = 'block';
+        };
+        imgElement.onerror = function() {
+            if(imgElement.src && imgElement.src !== window.location.href) activarModoDemo();
+        };
+
+        // ==========================================
+        // INICIO
         // ==========================================
         function iniciarExperiencia() {
             const docEl = document.documentElement;
-
-            // Solicitar Pantalla Completa (Soporte cruzado navegadores)
-            if (docEl.requestFullscreen) {
-                docEl.requestFullscreen();
-            } else if (docEl.mozRequestFullScreen) { /* Firefox */
-                docEl.mozRequestFullScreen();
-            } else if (docEl.webkitRequestFullscreen) { /* Chrome, Safari and Opera */
-                docEl.webkitRequestFullscreen();
-            } else if (docEl.msRequestFullscreen) { /* IE/Edge */
-                docEl.msRequestFullscreen();
-            }
-
-            // Ocultar intro y mostrar visor
+            if (docEl.requestFullscreen) docEl.requestFullscreen();
+            else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen();
+            
             introOverlay.style.opacity = '0';
             setTimeout(() => {
                 introOverlay.style.display = 'none';
@@ -170,22 +139,40 @@
         }
 
         // ==========================================
-        // LÓGICA DE ACTUALIZACIÓN
+        // LÓGICA CORE (Visualización)
         // ==========================================
-        function updateImage() {
-            let x = Math.max(0, Math.min(config.totalX - 1, state.currentX));
-            let y = Math.max(0, Math.min(config.totalY - 1, state.currentY));
+        function updateVisuals() {
+            // Cálculo simple del frame basado en el arrastre acumulado
+            let rawFrameX = Math.floor(-state.accumulatedDragX / config.sensitivity);
+            let rawFrameY = Math.floor(state.accumulatedDragY / config.sensitivity);
 
-            let imageNumber = (x * config.totalY) + y;
-            let numberString = imageNumber.toString().padStart(4, '0');
+            let safeX = Math.max(0, Math.min(config.totalX - 1, rawFrameX));
+            let safeY = Math.max(0, Math.min(config.totalY - 1, rawFrameY));
 
-            const filename = `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
-            
-            if (!imgElement.src.includes(filename)) {
-                imgElement.src = filename;
+            // Actualizar Imagen si cambió el frame
+            if (safeX !== state.lastFrameX || safeY !== state.lastFrameY) {
+                let imageNumber = (safeX * config.totalY) + safeY;
+                let numberString = imageNumber.toString().padStart(4, '0');
+                const filename = `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
+                
+                if (!imgElement.src.includes(filename)) {
+                    imgElement.src = filename;
+                }
+                
+                if (demoActive) drawDemoCube(safeX, safeY, filename);
+                
+                state.lastFrameX = safeX;
+                state.lastFrameY = safeY;
             }
 
-            if (demoActive) drawDemoCube(x, y, filename);
+            // APLICAR ZOOM SI SE ESTÁ ARRASTRANDO
+            // Si estamos arrastrando, mantenemos el zoom en el tope.
+            // La transición CSS en startDrag se encarga de llegar ahí suavemente.
+            if (state.isDragging) {
+                 imgElement.style.transform = `scale(${config.activeZoom})`;
+            }
+            // Nota: No necesitamos un 'else' aquí para volver a scale(1)
+            // porque eso lo maneja stopDrag con su propia transición.
         }
 
         // ==========================================
@@ -195,80 +182,80 @@
             state.isDragging = true;
             state.startX = clientX;
             state.startY = clientY;
-            state.initialIndexX = state.currentX;
-            state.initialIndexY = state.currentY;
             container.style.cursor = 'grabbing';
+            
+            // === EFECTO ZOOM AL TOCAR ===
+            // Transición rápida de entrada para que se sienta reactivo "al toque"
+            imgElement.style.transition = 'transform 0.2s ease-out';
+            // El objetivo es el zoom activo, updateVisuals lo mantendrá ahí
+            imgElement.style.transform = `scale(${config.activeZoom})`;
         }
 
         function onDrag(clientX, clientY) {
             if (!state.isDragging) return;
-
             const deltaX = clientX - state.startX;
             const deltaY = clientY - state.startY;
-
-            // Al dividir por un número más grande (65), el resultado es menor,
-            // por lo que cambian menos frames = Movimiento más pesado.
-            const framesMovedX = Math.floor(deltaX / config.sensitivity); 
-            const framesMovedY = Math.floor(deltaY / config.sensitivity);
-
-            state.currentX = state.initialIndexX - framesMovedX; 
-            state.currentY = state.initialIndexY + framesMovedY; 
-
-            updateImage();
+            state.accumulatedDragX += deltaX;
+            state.accumulatedDragY += deltaY;
+            state.startX = clientX;
+            state.startY = clientY;
+            updateVisuals();
         }
 
         function stopDrag() {
             state.isDragging = false;
             container.style.cursor = 'grab';
-            state.currentX = Math.max(0, Math.min(config.totalX - 1, state.currentX));
-            state.currentY = Math.max(0, Math.min(config.totalY - 1, state.currentY));
+            
+            // === EFECTO ZOOM AL SOLTAR ===
+            // Transición más lenta y suave de salida para relajar
+            imgElement.style.transition = 'transform 0.4s ease-in-out';
+            // Regresar al tamaño original
+            imgElement.style.transform = `scale(1)`;
         }
 
-        // Mouse
+        // Listeners
         container.addEventListener('mousedown', (e) => { e.preventDefault(); startDrag(e.clientX, e.clientY); });
         window.addEventListener('mousemove', (e) => { if(state.isDragging) onDrag(e.clientX, e.clientY); });
         window.addEventListener('mouseup', stopDrag);
+        window.addEventListener('mouseleave', stopDrag);
 
-        // Táctil
         container.addEventListener('touchstart', (e) => { const t = e.touches[0]; startDrag(t.clientX, t.clientY); }, { passive: false });
         window.addEventListener('touchmove', (e) => { if (state.isDragging) { const t = e.touches[0]; onDrag(t.clientX, t.clientY); } }, { passive: false });
         window.addEventListener('touchend', stopDrag);
 
+
         // ==========================================
         // MODO DEMO
         // ==========================================
-        let demoActive = false;
         function activarModoDemo() {
             demoActive = true;
             imgElement.style.display = 'none';
             demoCanvas.style.display = 'block';
             demoCanvas.width = container.clientWidth;
             demoCanvas.height = container.clientHeight;
-            updateImage();
         }
-
         function drawDemoCube(x, y, name) {
             const ctx = demoCanvas.getContext('2d');
             const w = demoCanvas.width; const h = demoCanvas.height;
-            
             ctx.clearRect(0, 0, w, h);
             ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
             ctx.save(); ctx.translate(w/2, h/2);
+            // El zoom también aplica al demo si se arrastra
+            if(state.isDragging) ctx.scale(config.activeZoom, config.activeZoom);
             ctx.scale(1.56, 1); 
-
-            const rotX = (x - 8) * 15; 
-            const rotY = (y - 8) * 10;
-            
-            ctx.strokeStyle = "#444"; ctx.lineWidth = 2;
+            const rotX = (x - 8) * 15; const rotY = (y - 8) * 10;
+            ctx.strokeStyle = "#666"; ctx.lineWidth = 2;
             ctx.strokeRect(-100 + rotX, -100 + rotY, 200 - rotX/2, 200 - rotY/2);
-            
-            ctx.font = "14px sans-serif"; ctx.fillStyle = "#666"; ctx.textAlign = "center";
-            ctx.fillText("VISTA PREVIA ESTIRADA", 0, -10);
+            ctx.font = "14px sans-serif"; ctx.fillStyle = "#888"; ctx.textAlign = "center";
+            ctx.fillText("MODO TÁCTIL (Sin Giro)", 0, -10);
             ctx.restore();
         }
+        window.addEventListener('resize', () => { if(demoActive) { demoCanvas.width = container.clientWidth; demoCanvas.height = container.clientHeight; }});
 
-        updateImage();
-        window.addEventListener('resize', () => { if(demoActive) activarModoDemo(); });
+        // INICIALIZACIÓN
+        state.accumulatedDragX = -(state.currentX * config.sensitivity);
+        state.accumulatedDragY = state.currentY * config.sensitivity;
+        updateVisuals();
 
     </script>
 </body>
