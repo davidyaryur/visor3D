@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Experiencia 3D Cinemática</title>
+    <title>Visor 3D Paso a Paso</title>
     <style>
         body {
             background-color: #000;
@@ -17,6 +17,7 @@
             font-family: sans-serif;
         }
 
+        /* PANTALLA DE INICIO */
         #intro-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background-color: #000; z-index: 999;
@@ -33,6 +34,7 @@
 
         #start-btn:hover { background: white; color: black; }
 
+        /* CONTENEDOR */
         .viewer-container {
             position: relative;
             width: 100%; max-width: 100%;
@@ -47,6 +49,7 @@
         .viewer-container.active { opacity: 1; }
         .viewer-container:active { cursor: grabbing; }
 
+        /* IMAGEN */
         #product-image {
             width: 100%; height: 100%;
             object-fit: fill; 
@@ -78,40 +81,26 @@
             filePrefix: "modelo",   
             fileExtension: ".jpg",  
             
-            // Sensibilidad (Cuanto más bajo, más rápido responde al dedo)
-            sensitivityX: 65,  
-            sensitivityY: 35,  
-            
-            // VELOCIDAD DE ANIMACIÓN (La clave de la solución)
-            // Tiempo mínimo en milisegundos entre cada cambio de foto.
-            // 30-40ms = Fluido pero visible (Cine/Videojuego).
-            // 100ms = Lento (tipo Stop Motion).
-            // Si sientes que pasa muy rápido, sube este número a 50 o 60.
-            animationSpeed: 40 
+            // Umbral de disparo:
+            // Cuántos píxeles debe moverse el dedo para que el sistema diga "OK, esto es un gesto".
+            // 5px es casi instantáneo pero evita disparos por temblor de pulso.
+            thresholdPx: 5
         };
 
         // ==========================================
         // VARIABLES DE ESTADO
         // ==========================================
         let state = {
-            // Posición ACTUAL VISIBLE (Indices directos 0-15)
             currentX: 8, 
             currentY: 8,
             
-            // Posición OBJETIVO (Calculada por el dedo)
-            targetX: 8,
-            targetY: 8,
-
-            // Acumuladores de arrastre en píxeles
-            dragAccumulatorX: 0,
-            dragAccumulatorY: 0,
-
-            // Control de tiempo
-            lastUpdateTime: 0,
-
             isDragging: false,
             startX: 0,
-            startY: 0
+            startY: 0,
+            
+            // ESTA ES LA CLAVE:
+            // Bandera para saber si ya cambiamos de foto en este toque.
+            hasMovedInThisStroke: false
         };
 
         const container = document.getElementById('container');
@@ -144,50 +133,14 @@
             setTimeout(() => {
                 introOverlay.style.display = 'none';
                 container.classList.add('active');
-                loopRender(0); // Iniciar loop
+                updateImageDOM(); // Cargar primera imagen
             }, 500);
         }
 
         // ==========================================
-        // MOTOR DE RENDERIZADO (Con Freno de Tiempo)
+        // LÓGICA DE ACTUALIZACIÓN VISUAL
         // ==========================================
-        function loopRender(timestamp) {
-            
-            // Verificar si ha pasado suficiente tiempo desde el último cambio de foto
-            // Si no ha pasado el tiempo configurado (40ms), no hacemos nada visual, solo esperamos.
-            if (timestamp - state.lastUpdateTime > config.animationSpeed) {
-                
-                let changed = false;
-
-                // --- LÓGICA EJE X ---
-                // Si la foto actual es diferente a la objetivo, nos movemos UNA SOLA posición
-                if (state.currentX !== state.targetX) {
-                    // Calculamos la dirección (+1 o -1)
-                    let direction = Math.sign(state.targetX - state.currentX);
-                    state.currentX += direction;
-                    changed = true;
-                }
-
-                // --- LÓGICA EJE Y ---
-                if (state.currentY !== state.targetY) {
-                    let direction = Math.sign(state.targetY - state.currentY);
-                    state.currentY += direction;
-                    changed = true;
-                }
-
-                // Si hubo cambios, actualizamos el DOM y reseteamos el cronómetro
-                if (changed) {
-                    updateImageDOM();
-                    state.lastUpdateTime = timestamp;
-                }
-            }
-
-            requestAnimationFrame(loopRender);
-        }
-
         function updateImageDOM() {
-            // Asegurar límites (Clamping) para evitar errores
-            // Aunque el target puede irse al infinito, el current lo limitamos al mostrar
             let safeX = Math.max(0, Math.min(config.totalX - 1, state.currentX));
             let safeY = Math.max(0, Math.min(config.totalY - 1, state.currentY));
 
@@ -203,51 +156,60 @@
         }
 
         // ==========================================
-        // EVENTOS (Solo actualizan el OBJETIVO)
+        // GESTIÓN DE EVENTOS (LÓGICA DISCRETA)
         // ==========================================
         function startDrag(clientX, clientY) {
             state.isDragging = true;
             state.startX = clientX;
             state.startY = clientY;
+            
+            // RESETEAMOS LA BANDERA
+            // Permitimos un nuevo movimiento para este nuevo toque
+            state.hasMovedInThisStroke = false;
+            
             container.style.cursor = 'grabbing';
         }
 
         function onDrag(clientX, clientY) {
             if (!state.isDragging) return;
-            
+
+            // SI YA MOVIÓ LA FOTO EN ESTE TOQUE, NO HACEMOS NADA.
+            // Esto obliga al usuario a levantar el dedo para mover de nuevo.
+            if (state.hasMovedInThisStroke) return;
+
             const deltaX = clientX - state.startX;
             const deltaY = clientY - state.startY;
-            
-            // Acumulamos píxeles
-            state.dragAccumulatorX += deltaX;
-            state.dragAccumulatorY += deltaY;
 
-            // Calculamos cuántas fotos "OBJETIVO" deberíamos haber avanzado según el arrastre
-            // Eje X (Invertido)
-            let framesMovedX = Math.floor(-state.dragAccumulatorX / config.sensitivityX);
-            // Eje Y
-            let framesMovedY = Math.floor(state.dragAccumulatorY / config.sensitivityY);
+            // Verificamos si superó el umbral mínimo (5px)
+            if (Math.abs(deltaX) > config.thresholdPx || Math.abs(deltaY) > config.thresholdPx) {
+                
+                // DECISIÓN INSTANTÁNEA: ¿Es horizontal o vertical?
+                if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                    // --- MOVIMIENTO HORIZONTAL ---
+                    if (deltaX > 0) {
+                        // Arrastre a derecha -> Foto Anterior (Giro Izq)
+                        state.currentX = Math.max(0, state.currentX - 1);
+                    } else {
+                        // Arrastre a izquierda -> Foto Siguiente (Giro Der)
+                        state.currentX = Math.min(config.totalX - 1, state.currentX + 1);
+                    }
+                } else {
+                    // --- MOVIMIENTO VERTICAL ---
+                    if (deltaY > 0) {
+                        // Arrastre abajo -> Foto Anterior (Bajar vista)
+                        state.currentY = Math.min(config.totalY - 1, state.currentY + 1);
+                    } else {
+                        // Arrastre arriba -> Foto Siguiente (Subir vista)
+                        state.currentY = Math.max(0, state.currentY - 1);
+                    }
+                }
 
-            // Actualizamos el Target Global (Partiendo de un centro relativo 8,8 si fuera reseteable, 
-            // pero aquí sumamos al acumulado)
-            
-            // Corrección: El target debe basarse en el acumulado total + el inicio
-            // Para simplificar, asumimos que empezamos en 8,8 y sumamos frames
-            let baseIndex = 8; 
-            
-            // Actualizamos el TARGET. El "current" lo perseguirá a su ritmo.
-            // Limitamos el target para que no se vaya a números locos (ej: -500) que tardarían años en volver
-            let potentialTargetX = baseIndex + framesMovedX;
-            let potentialTargetY = baseIndex + framesMovedY;
+                // ACTUALIZAR IMAGEN INMEDIATAMENTE
+                updateImageDOM();
 
-            // Limitamos el objetivo a los bordes reales (0 a 15)
-            // Esto es importante: si arrastras muchísimo, el objetivo no pasa de 15,
-            // así la animación no se queda pegada intentando llegar a 100.
-            state.targetX = Math.max(0, Math.min(config.totalX - 1, potentialTargetX));
-            state.targetY = Math.max(0, Math.min(config.totalY - 1, potentialTargetY));
-
-            state.startX = clientX;
-            state.startY = clientY;
+                // BLOQUEAR CUALQUIER OTRO CAMBIO HASTA SOLTAR
+                state.hasMovedInThisStroke = true;
+            }
         }
 
         function stopDrag() {
@@ -265,6 +227,7 @@
         container.addEventListener('touchstart', (e) => { const t = e.touches[0]; startDrag(t.clientX, t.clientY); }, { passive: false });
         window.addEventListener('touchmove', (e) => { if (state.isDragging) { const t = e.touches[0]; onDrag(t.clientX, t.clientY); } }, { passive: false });
         window.addEventListener('touchend', stopDrag);
+
 
         // ==========================================
         // MODO DEMO
@@ -284,10 +247,10 @@
             ctx.save(); ctx.translate(w/2, h/2);
             ctx.scale(1.56, 1); 
             const rotX = (x - 8) * 15; const rotY = (y - 8) * 10;
-            ctx.strokeStyle = "#888"; ctx.lineWidth = 2;
+            ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; // Borde más grueso para notar el cambio
             ctx.strokeRect(-100 + rotX, -100 + rotY, 200 - rotX/2, 200 - rotY/2);
-            ctx.font = "14px sans-serif"; ctx.fillStyle = "#aaa"; ctx.textAlign = "center";
-            ctx.fillText("MODO CINE", 0, -10);
+            ctx.font = "14px sans-serif"; ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+            ctx.fillText("MODO PASO A PASO", 0, -10);
             ctx.fillText(name.split('/').pop(), 0, 20);
             ctx.restore();
         }
