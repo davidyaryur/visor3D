@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Experiencia 3D Pro</title>
+    <title>Experiencia 3D Fluida</title>
     <style>
         body {
             background-color: #000;
@@ -17,7 +17,6 @@
             font-family: sans-serif;
         }
 
-        /* PANTALLA DE INICIO */
         #intro-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background-color: #000; z-index: 999;
@@ -26,15 +25,14 @@
         }
 
         #start-btn {
-            background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5);
+            background: transparent; color: white; border: 1px solid rgba(255,255,255,0.6);
             padding: 15px 40px; font-size: 1rem; text-transform: uppercase;
             letter-spacing: 3px; cursor: pointer; border-radius: 50px;
             transition: all 0.3s;
         }
 
-        #start-btn:hover { background: white; color: black; border-color: white; }
+        #start-btn:hover { background: white; color: black; }
 
-        /* CONTENEDOR PRINCIPAL */
         .viewer-container {
             position: relative;
             width: 100%; max-width: 100%;
@@ -49,14 +47,12 @@
         .viewer-container.active { opacity: 1; }
         .viewer-container:active { cursor: grabbing; }
 
-        /* IMAGEN */
         #product-image {
             width: 100%; height: 100%;
             object-fit: fill; 
             display: block; pointer-events: none; -webkit-user-drag: none;
             transform-origin: center center;
-            /* Importante: will-change ayuda a que el escalado sea suave */
-            will-change: transform;
+            will-change: transform; /* Optimización vital para animación */
             transform: scale(1);
         }
 
@@ -84,30 +80,43 @@
             folderPath: "renders/", 
             filePrefix: "modelo",   
             fileExtension: ".jpg",  
-            sensitivity: 65,  // Píxeles para cambiar 1 foto
             
-            // AJUSTE DE SUTILEZA
-            // 0.001 significa un aumento del 1% (muy sutil)
-            maxZoomDelta: 0.01 
+            // Sensibilidad de entrada (cuanto arrastre = 1 foto de distancia)
+            sensitivity: 65,  
+            
+            // Zoom máximo (2.5%)
+            maxZoomDelta: 0.025,
+
+            // VELOCIDAD DE PERSECUCIÓN
+            // Cuantos frames puede saltar el sistema POR FRAME DE NAVEGADOR (16ms)
+            // 1 = Estricto (muestra TODAS las fotos intermedias, puede sentirse lento si arrastras muy lejos)
+            // 2 o 3 = Compromiso (salta de 2 en 2 si vas muy rápido, pero imperceptible al ojo)
+            // Dado que pediste "obligatoriamente", lo dejaremos en 1.
+            chaseSpeed: 1
         };
 
         // ==========================================
         // VARIABLES DE ESTADO
         // ==========================================
         let state = {
-            currentX: 8, 
-            currentY: 8,
+            // Posición REAL actual (lo que se ve en pantalla)
+            currentFrameX: 0, 
+            currentFrameY: 0,
+            
+            // Posición OBJETIVO (donde está tu dedo o hacia donde queremos ir)
+            targetDragX: 0,
+            targetDragY: 0,
+
+            // Variables de interacción
             isDragging: false,
             startX: 0,
             startY: 0,
-            accumulatedDragX: 0, 
-            accumulatedDragY: 0,
             
-            // Nueva variable para controlar la "fuerza" del zoom actual
+            // Para el zoom
             currentDragMagnitude: 0, 
             
-            lastFrameX: -1, 
-            lastFrameY: -1
+            // Referencia para el loop de animación
+            animationId: null
         };
 
         const container = document.getElementById('container');
@@ -140,59 +149,103 @@
             setTimeout(() => {
                 introOverlay.style.display = 'none';
                 container.classList.add('active');
+                
+                // Inicializar posición inicial (Centro aprox)
+                // Frame 8, 8
+                state.currentFrameX = 8 * config.sensitivity;
+                state.currentFrameY = 8 * config.sensitivity;
+                state.targetDragX = -state.currentFrameX;
+                state.targetDragY = state.currentFrameY;
+                
+                // Arrancar el motor de renderizado continuo
+                loopRender();
             }, 500);
         }
 
         // ==========================================
-        // LÓGICA VISUAL (ZOOM + FRAMES)
+        // MOTOR DE RENDERIZADO (Game Loop)
         // ==========================================
-        function updateVisuals() {
-            // 1. Calcular Frames (Imágenes)
-            let rawFrameX = Math.floor(-state.accumulatedDragX / config.sensitivity);
-            let rawFrameY = Math.floor(state.accumulatedDragY / config.sensitivity);
+        // Esta función se ejecuta 60 veces por segundo aprox.
+        function loopRender() {
+            
+            // 1. Convertir la posición del dedo (Target) a "Coordenadas de Frames"
+            // Invertimos X para que el arrastre sea natural
+            let targetFrameRawX = -state.targetDragX;
+            let targetFrameRawY = state.targetDragY;
 
-            let safeX = Math.max(0, Math.min(config.totalX - 1, rawFrameX));
-            let safeY = Math.max(0, Math.min(config.totalY - 1, rawFrameY));
-
-            // Cambio de imagen
-            if (safeX !== state.lastFrameX || safeY !== state.lastFrameY) {
-                let imageNumber = (safeX * config.totalY) + safeY;
-                let numberString = imageNumber.toString().padStart(4, '0');
-                const filename = `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
+            // 2. Lógica de PERSECUCIÓN (Interpolación paso a paso)
+            // Si lo que mostramos (current) es diferente a lo que pide el dedo (target)...
+            
+            // --- Eje X ---
+            let diffX = targetFrameRawX - state.currentFrameX;
+            if (Math.abs(diffX) > 0) {
+                // Si la diferencia es positiva, sumamos. Si negativa, restamos.
+                // Math.sign devuelve 1 o -1.
+                // Multiplicamos por chaseSpeed (1) para asegurar que pase frame por frame
+                let step = Math.sign(diffX) * Math.min(Math.abs(diffX), config.sensitivity * config.chaseSpeed);
                 
-                if (!imgElement.src.includes(filename)) imgElement.src = filename;
-                if (demoActive) drawDemoCube(safeX, safeY, filename);
-                
-                state.lastFrameX = safeX;
-                state.lastFrameY = safeY;
+                // Truco: Para obligar a ver todas las fotos, nos movemos pixel a pixel del "sensitivity"
+                // Pero para que no sea eterno, avanzamos en bloques controlados.
+                // Aquí forzamos que avance hacia el objetivo
+                if (Math.abs(diffX) >= config.sensitivity) {
+                     state.currentFrameX += Math.sign(diffX) * config.sensitivity;
+                } else {
+                    // Ajuste fino (sub-pixel)
+                    state.currentFrameX = targetFrameRawX; 
+                }
             }
 
-            // 2. CÁLCULO DEL ZOOM PROGRESIVO
-            // Calculamos cuánto nos hemos movido desde que hicimos click (Magnitud absoluta)
-            // Usamos Pitágoras simple o solo la mayor distancia eje para determinar la "intensidad"
-            // Aquí usamos la distancia total recorrida en este "gesto"
+            // --- Eje Y ---
+            let diffY = targetFrameRawY - state.currentFrameY;
+            if (Math.abs(diffY) > 0) {
+                 if (Math.abs(diffY) >= config.sensitivity) {
+                     state.currentFrameY += Math.sign(diffY) * config.sensitivity;
+                } else {
+                    state.currentFrameY = targetFrameRawY;
+                }
+            }
+
+            // 3. CALCULAR QUÉ FOTO MOSTRAR
+            // Convertimos la posición "perseguidora" en índices de 0 a 15
+            let rawIndexX = Math.floor(state.currentFrameX / config.sensitivity);
+            let rawIndexY = Math.floor(state.currentFrameY / config.sensitivity);
+
+            // "Clamping" (Limitar para no salir del rango de fotos)
+            let safeX = Math.max(0, Math.min(config.totalX - 1, rawIndexX));
+            let safeY = Math.max(0, Math.min(config.totalY - 1, rawIndexY));
+
+            // 4. ACTUALIZAR IMAGEN
+            // Solo actualizamos el DOM si el cálculo dio una foto nueva
+            // IMPORTANTE: Aquí es donde ocurre la magia. Como el "current" avanza
+            // paso a paso hacia el "target", pasará por safeX=4, luego safeX=5, etc.
+            let imageNumber = (safeX * config.totalY) + safeY;
+            let numberString = imageNumber.toString().padStart(4, '0');
+            const filename = `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
+
+            if (!imgElement.src.includes(filename)) {
+                imgElement.src = filename;
+            }
             
-            // Normalizamos: 0 = nada, 1 = hemos recorrido la distancia de 1 foto (sensitivity)
+            if (demoActive) drawDemoCube(safeX, safeY, filename);
+
+            // 5. ZOOM PROGRESIVO
             let progress = Math.min(state.currentDragMagnitude / config.sensitivity, 1.0);
-            
-            // Ecuación de escala: 1 + (progreso * fuerza)
             let currentScale = 1 + (progress * config.maxZoomDelta);
-            
             imgElement.style.transform = `scale(${currentScale})`;
+
+            // Solicitar el siguiente frame
+            state.animationId = requestAnimationFrame(loopRender);
         }
 
         // ==========================================
-        // EVENTOS
+        // EVENTOS DE ENTRADA (Solo actualizan el Target)
         // ==========================================
         function startDrag(clientX, clientY) {
             state.isDragging = true;
             state.startX = clientX;
             state.startY = clientY;
-            state.currentDragMagnitude = 0; // Reseteamos el contador de "tensión"
-            
+            state.currentDragMagnitude = 0;
             container.style.cursor = 'grabbing';
-            
-            // IMPORTANTE: Quitamos transición al empezar para que el zoom siga al dedo milimétricamente
             imgElement.style.transition = 'none';
         }
 
@@ -202,30 +255,28 @@
             const deltaX = clientX - state.startX;
             const deltaY = clientY - state.startY;
             
-            // Acumuladores para el cambio de foto
-            state.accumulatedDragX += deltaX;
-            state.accumulatedDragY += deltaY;
+            // AQUÍ ESTÁ EL CAMBIO CLAVE:
+            // No cambiamos la foto. Solo le decimos al sistema "El dedo está aquí ahora".
+            // El loopRender se encargará de correr hasta aquí.
+            state.targetDragX += deltaX;
+            state.targetDragY += deltaY;
             
-            // Calculamos cuánto nos hemos alejado del punto inicial del clic actual
-            // Esto define la intensidad del zoom
-            // Usamos Math.abs de delta acumulado temporalmente para este gesto no funcionaría bien
-            // Mejor: Sumamos el movimiento absoluto para "llenar la barra de energía"
+            // Calculamos magnitud para el zoom
             state.currentDragMagnitude += Math.sqrt(deltaX*deltaX + deltaY*deltaY); 
 
-            // Actualizamos referencias para el siguiente frame
             state.startX = clientX;
             state.startY = clientY;
-            
-            updateVisuals();
         }
 
         function stopDrag() {
             state.isDragging = false;
             container.style.cursor = 'grab';
-            
-            // Al soltar, activamos la transición suave para que el zoom "se desinfle" elegante
             imgElement.style.transition = 'transform 0.5s ease-in-out';
-            imgElement.style.transform = `scale(1)`;
+            
+            // Reseteamos el zoom (la escala vuelve a 1)
+            // Nota: No reseteamos currentDragMagnitude instantáneamente a 0 aquí 
+            // para permitir que la transición CSS haga el trabajo visual suave.
+            state.currentDragMagnitude = 0; 
         }
 
         // Listeners Mouse
@@ -238,7 +289,6 @@
         container.addEventListener('touchstart', (e) => { const t = e.touches[0]; startDrag(t.clientX, t.clientY); }, { passive: false });
         window.addEventListener('touchmove', (e) => { if (state.isDragging) { const t = e.touches[0]; onDrag(t.clientX, t.clientY); } }, { passive: false });
         window.addEventListener('touchend', stopDrag);
-
 
         // ==========================================
         // MODO DEMO
@@ -256,29 +306,20 @@
             ctx.clearRect(0, 0, w, h);
             ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
             ctx.save(); ctx.translate(w/2, h/2);
-            
-            // Aplicar el mismo zoom al demo
             let progress = Math.min(state.currentDragMagnitude / config.sensitivity, 1.0);
             let s = 1 + (progress * config.maxZoomDelta);
             ctx.scale(s, s);
-
             ctx.scale(1.56, 1); 
             const rotX = (x - 8) * 15; const rotY = (y - 8) * 10;
-            ctx.strokeStyle = "#444"; ctx.lineWidth = 2;
+            ctx.strokeStyle = "#666"; ctx.lineWidth = 2;
             ctx.strokeRect(-100 + rotX, -100 + rotY, 200 - rotX/2, 200 - rotY/2);
-            ctx.font = "14px sans-serif"; ctx.fillStyle = "#666"; ctx.textAlign = "center";
-            ctx.fillText("MODO PROGRESIVO", 0, -10);
+            ctx.font = "14px sans-serif"; ctx.fillStyle = "#888"; ctx.textAlign = "center";
+            ctx.fillText("MODO SIN SALTOS", 0, -10);
+            ctx.fillText(name.split('/').pop(), 0, 20);
             ctx.restore();
         }
         window.addEventListener('resize', () => { if(demoActive) { demoCanvas.width = container.clientWidth; demoCanvas.height = container.clientHeight; }});
 
-        // Inicio
-        state.accumulatedDragX = -(state.currentX * config.sensitivity);
-        state.accumulatedDragY = state.currentY * config.sensitivity;
-        updateVisuals();
-
     </script>
 </body>
 </html>
-
-
