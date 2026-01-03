@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Visor 3D Paso a Paso</title>
+    <title>Visor 3D Premium Final</title>
     <style>
         body {
             background-color: #000;
@@ -54,6 +54,15 @@
             width: 100%; height: 100%;
             object-fit: fill; 
             display: block; pointer-events: none; -webkit-user-drag: none;
+            transform-origin: center center;
+            /* Transición suave para el rebote del borde */
+            transition: transform 0.2s ease-out;
+            transform: scale(1);
+        }
+        
+        /* CLASE PARA EL EFECTO DE TOPE/BORDE (1.5% de zoom) */
+        #product-image.at-edge {
+            transform: scale(1.015);
         }
 
         #demo-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; pointer-events: none; }
@@ -80,10 +89,6 @@
             folderPath: "renders/", 
             filePrefix: "modelo",   
             fileExtension: ".jpg",  
-            
-            // Umbral de disparo:
-            // Cuántos píxeles debe moverse el dedo para que el sistema diga "OK, esto es un gesto".
-            // 5px es casi instantáneo pero evita disparos por temblor de pulso.
             thresholdPx: 5
         };
 
@@ -93,13 +98,9 @@
         let state = {
             currentX: 8, 
             currentY: 8,
-            
             isDragging: false,
             startX: 0,
             startY: 0,
-            
-            // ESTA ES LA CLAVE:
-            // Bandera para saber si ya cambiamos de foto en este toque.
             hasMovedInThisStroke: false
         };
 
@@ -110,7 +111,7 @@
         let demoActive = false;
 
         // ==========================================
-        // CARGA
+        // CARGA INICIAL
         // ==========================================
         imgElement.onload = function() {
             demoActive = false;
@@ -122,7 +123,7 @@
         };
 
         // ==========================================
-        // INICIO
+        // INICIO EXPERIENCIA
         // ==========================================
         function iniciarExperiencia() {
             const docEl = document.documentElement;
@@ -133,27 +134,67 @@
             setTimeout(() => {
                 introOverlay.style.display = 'none';
                 container.classList.add('active');
-                updateImageDOM(); // Cargar primera imagen
+                // Cargar primera imagen y sus vecinas
+                updateImageDOM(state.currentX, state.currentY); 
             }, 500);
         }
 
         // ==========================================
-        // LÓGICA DE ACTUALIZACIÓN VISUAL
+        // HELPER: Generar Nombre de Archivo
         // ==========================================
-        function updateImageDOM() {
-            let safeX = Math.max(0, Math.min(config.totalX - 1, state.currentX));
-            let safeY = Math.max(0, Math.min(config.totalY - 1, state.currentY));
-
+        function getFilename(x, y) {
+            // Clamping de seguridad
+            let safeX = Math.max(0, Math.min(config.totalX - 1, x));
+            let safeY = Math.max(0, Math.min(config.totalY - 1, y));
             let imageNumber = (safeX * config.totalY) + safeY;
             let numberString = imageNumber.toString().padStart(4, '0');
-            const filename = `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
+            return `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
+        }
 
+        // ==========================================
+        // LÓGICA DE ACTUALIZACIÓN VISUAL + PRECARGA
+        // ==========================================
+        function updateImageDOM(newX, newY) {
+            const filename = getFilename(newX, newY);
+
+            // Solo actualizar si es diferente
             if (!imgElement.src.includes(filename)) {
                 imgElement.src = filename;
+                state.currentX = newX;
+                state.currentY = newY;
             }
             
-            if (demoActive) drawDemoCube(safeX, safeY, filename);
+            if (demoActive) drawDemoCube(newX, newY, filename);
+
+            // --- MAGIA DE PRECARGA INSTANTÁNEA ---
+            // Calculamos los 4 vecinos posibles
+            const neighbors = [
+                {x: newX + 1, y: newY}, {x: newX - 1, y: newY},
+                {x: newX, y: newY + 1}, {x: newX, y: newY - 1}
+            ];
+
+            // Creamos imágenes invisibles en memoria para que el navegador las cachee
+            neighbors.forEach(n => {
+                // Solo precargamos si la coordenada existe (está dentro de los límites)
+                if (n.x >= 0 && n.x < config.totalX && n.y >= 0 && n.y < config.totalY) {
+                    const preloadImg = new Image();
+                    preloadImg.src = getFilename(n.x, n.y);
+                }
+            });
         }
+
+        // ==========================================
+        // FEEDBACK DE BORDE (El pequeño rebote)
+        // ==========================================
+        function triggerEdgeFeedback() {
+            // Añadimos la clase que tiene el scale(1.015)
+            imgElement.classList.add('at-edge');
+            // La quitamos rápidamente para que haga el efecto de rebote
+            setTimeout(() => {
+                imgElement.classList.remove('at-edge');
+            }, 150);
+        }
+
 
         // ==========================================
         // GESTIÓN DE EVENTOS (LÓGICA DISCRETA)
@@ -162,52 +203,55 @@
             state.isDragging = true;
             state.startX = clientX;
             state.startY = clientY;
-            
-            // RESETEAMOS LA BANDERA
-            // Permitimos un nuevo movimiento para este nuevo toque
             state.hasMovedInThisStroke = false;
-            
             container.style.cursor = 'grabbing';
         }
 
         function onDrag(clientX, clientY) {
-            if (!state.isDragging) return;
-
-            // SI YA MOVIÓ LA FOTO EN ESTE TOQUE, NO HACEMOS NADA.
-            // Esto obliga al usuario a levantar el dedo para mover de nuevo.
-            if (state.hasMovedInThisStroke) return;
+            if (!state.isDragging || state.hasMovedInThisStroke) return;
 
             const deltaX = clientX - state.startX;
             const deltaY = clientY - state.startY;
 
-            // Verificamos si superó el umbral mínimo (5px)
             if (Math.abs(deltaX) > config.thresholdPx || Math.abs(deltaY) > config.thresholdPx) {
                 
-                // DECISIÓN INSTANTÁNEA: ¿Es horizontal o vertical?
+                let moved = false; // ¿Logramos movernos?
+
+                // DECISIÓN INSTANTÁNEA: ¿Horizontal o Vertical?
                 if (Math.abs(deltaX) > Math.abs(deltaY)) {
                     // --- MOVIMIENTO HORIZONTAL ---
-                    if (deltaX > 0) {
-                        // Arrastre a derecha -> Foto Anterior (Giro Izq)
-                        state.currentX = Math.max(0, state.currentX - 1);
-                    } else {
-                        // Arrastre a izquierda -> Foto Siguiente (Giro Der)
-                        state.currentX = Math.min(config.totalX - 1, state.currentX + 1);
+                    if (deltaX > 0) { // Arrastre Derecha
+                        if (state.currentX > 0) {
+                            updateImageDOM(state.currentX - 1, state.currentY);
+                            moved = true;
+                        }
+                    } else { // Arrastre Izquierda
+                        if (state.currentX < config.totalX - 1) {
+                            updateImageDOM(state.currentX + 1, state.currentY);
+                            moved = true;
+                        }
                     }
                 } else {
                     // --- MOVIMIENTO VERTICAL ---
-                    if (deltaY > 0) {
-                        // Arrastre abajo -> Foto Anterior (Bajar vista)
-                        state.currentY = Math.min(config.totalY - 1, state.currentY + 1);
-                    } else {
-                        // Arrastre arriba -> Foto Siguiente (Subir vista)
-                        state.currentY = Math.max(0, state.currentY - 1);
+                    if (deltaY > 0) { // Arrastre Abajo
+                        if (state.currentY < config.totalY - 1) {
+                            updateImageDOM(state.currentX, state.currentY + 1);
+                            moved = true;
+                        }
+                    } else { // Arrastre Arriba
+                        if (state.currentY > 0) {
+                            updateImageDOM(state.currentX, state.currentY - 1);
+                            moved = true;
+                        }
                     }
                 }
 
-                // ACTUALIZAR IMAGEN INMEDIATAMENTE
-                updateImageDOM();
+                // Si NO nos movimos es porque chocamos con un borde -> Feedback
+                if (!moved) {
+                    triggerEdgeFeedback();
+                }
 
-                // BLOQUEAR CUALQUIER OTRO CAMBIO HASTA SOLTAR
+                // Bloqueamos este toque, ya sea que nos movimos o que rebotamos
                 state.hasMovedInThisStroke = true;
             }
         }
@@ -217,13 +261,12 @@
             container.style.cursor = 'grab';
         }
 
-        // Listeners Mouse
+        // Listeners
         container.addEventListener('mousedown', (e) => { e.preventDefault(); startDrag(e.clientX, e.clientY); });
         window.addEventListener('mousemove', (e) => { if(state.isDragging) onDrag(e.clientX, e.clientY); });
         window.addEventListener('mouseup', stopDrag);
         window.addEventListener('mouseleave', stopDrag);
 
-        // Listeners Táctil
         container.addEventListener('touchstart', (e) => { const t = e.touches[0]; startDrag(t.clientX, t.clientY); }, { passive: false });
         window.addEventListener('touchmove', (e) => { if (state.isDragging) { const t = e.touches[0]; onDrag(t.clientX, t.clientY); } }, { passive: false });
         window.addEventListener('touchend', stopDrag);
@@ -245,13 +288,14 @@
             ctx.clearRect(0, 0, w, h);
             ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
             ctx.save(); ctx.translate(w/2, h/2);
+            // El demo también aplica el rebote si tiene la clase
+            if(imgElement.classList.contains('at-edge')) ctx.scale(1.015, 1.015);
             ctx.scale(1.56, 1); 
             const rotX = (x - 8) * 15; const rotY = (y - 8) * 10;
-            ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; // Borde más grueso para notar el cambio
+            ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; 
             ctx.strokeRect(-100 + rotX, -100 + rotY, 200 - rotX/2, 200 - rotY/2);
             ctx.font = "14px sans-serif"; ctx.fillStyle = "#fff"; ctx.textAlign = "center";
-            ctx.fillText("MODO PASO A PASO", 0, -10);
-            ctx.fillText(name.split('/').pop(), 0, 20);
+            ctx.fillText("PRECARGA + REBOTE", 0, -10);
             ctx.restore();
         }
         window.addEventListener('resize', () => { if(demoActive) { demoCanvas.width = container.clientWidth; demoCanvas.height = container.clientHeight; }});
