@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Experiencia 3D Final</title>
+    <title>Experiencia 3D Cinemática</title>
     <style>
         body {
             background-color: #000;
@@ -51,7 +51,6 @@
             width: 100%; height: 100%;
             object-fit: fill; 
             display: block; pointer-events: none; -webkit-user-drag: none;
-            /* Eliminamos transformaciones complejas */
         }
 
         #demo-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; pointer-events: none; }
@@ -79,29 +78,40 @@
             filePrefix: "modelo",   
             fileExtension: ".jpg",  
             
-            // AJUSTE CLAVE: Sensibilidad separada
-            sensitivityX: 65,  // Horizontal pesado (Giros estables)
-            sensitivityY: 35,  // Vertical ligero (Más fácil de activar)
+            // Sensibilidad (Cuanto más bajo, más rápido responde al dedo)
+            sensitivityX: 65,  
+            sensitivityY: 35,  
             
-            // Velocidad máxima de cambio (para no saltar fotos)
-            // Esto asegura que veamos todas las fotos intermedias
-            maxSpeed: 1 
+            // VELOCIDAD DE ANIMACIÓN (La clave de la solución)
+            // Tiempo mínimo en milisegundos entre cada cambio de foto.
+            // 30-40ms = Fluido pero visible (Cine/Videojuego).
+            // 100ms = Lento (tipo Stop Motion).
+            // Si sientes que pasa muy rápido, sube este número a 50 o 60.
+            animationSpeed: 40 
         };
 
         // ==========================================
         // VARIABLES DE ESTADO
         // ==========================================
         let state = {
-            currentPxX: 0, 
-            currentPxY: 0,
-            targetPxX: 0,
-            targetPxY: 0,
+            // Posición ACTUAL VISIBLE (Indices directos 0-15)
+            currentX: 8, 
+            currentY: 8,
             
+            // Posición OBJETIVO (Calculada por el dedo)
+            targetX: 8,
+            targetY: 8,
+
+            // Acumuladores de arrastre en píxeles
+            dragAccumulatorX: 0,
+            dragAccumulatorY: 0,
+
+            // Control de tiempo
+            lastUpdateTime: 0,
+
             isDragging: false,
             startX: 0,
-            startY: 0,
-            
-            animationId: null
+            startY: 0
         };
 
         const container = document.getElementById('container');
@@ -134,76 +144,66 @@
             setTimeout(() => {
                 introOverlay.style.display = 'none';
                 container.classList.add('active');
-                
-                // Centrar en 8, 8
-                state.currentPxX = 8 * config.sensitivityX;
-                state.currentPxY = 8 * config.sensitivityY;
-                state.targetPxX = -state.currentPxX; // Invertido por lógica de arrastre
-                state.targetPxY = state.currentPxY;
-                
-                loopRender();
+                loopRender(0); // Iniciar loop
             }, 500);
         }
 
         // ==========================================
-        // MOTOR LÓGICO (Bucle 60fps)
+        // MOTOR DE RENDERIZADO (Con Freno de Tiempo)
         // ==========================================
-        function loopRender() {
-            // Objetivo invertido en X para naturalidad
-            let targetRawX = -state.targetPxX;
-            let targetRawY = state.targetPxY;
-
-            // --- Lógica X (Horizontal) ---
-            let diffX = targetRawX - state.currentPxX;
-            if (diffX !== 0) {
-                // Nos movemos hacia el objetivo, pero limitados por la velocidad máxima
-                // Multiplicamos por sensitivityX para asegurar que si el frame debe saltar, salte completo
-                // pero paso a paso.
-                let stepX = config.sensitivityX * config.maxSpeed;
+        function loopRender(timestamp) {
+            
+            // Verificar si ha pasado suficiente tiempo desde el último cambio de foto
+            // Si no ha pasado el tiempo configurado (40ms), no hacemos nada visual, solo esperamos.
+            if (timestamp - state.lastUpdateTime > config.animationSpeed) {
                 
-                // Si la diferencia es menor que el paso máximo, llegamos al destino
-                if (Math.abs(diffX) <= stepX) {
-                    state.currentPxX = targetRawX;
-                } else {
-                    state.currentPxX += Math.sign(diffX) * stepX;
+                let changed = false;
+
+                // --- LÓGICA EJE X ---
+                // Si la foto actual es diferente a la objetivo, nos movemos UNA SOLA posición
+                if (state.currentX !== state.targetX) {
+                    // Calculamos la dirección (+1 o -1)
+                    let direction = Math.sign(state.targetX - state.currentX);
+                    state.currentX += direction;
+                    changed = true;
+                }
+
+                // --- LÓGICA EJE Y ---
+                if (state.currentY !== state.targetY) {
+                    let direction = Math.sign(state.targetY - state.currentY);
+                    state.currentY += direction;
+                    changed = true;
+                }
+
+                // Si hubo cambios, actualizamos el DOM y reseteamos el cronómetro
+                if (changed) {
+                    updateImageDOM();
+                    state.lastUpdateTime = timestamp;
                 }
             }
 
-            // --- Lógica Y (Vertical) ---
-            let diffY = targetRawY - state.currentPxY;
-            if (diffY !== 0) {
-                let stepY = config.sensitivityY * config.maxSpeed;
-                if (Math.abs(diffY) <= stepY) {
-                    state.currentPxY = targetRawY;
-                } else {
-                    state.currentPxY += Math.sign(diffY) * stepY;
-                }
-            }
+            requestAnimationFrame(loopRender);
+        }
 
-            // Calcular Indices
-            let rawIndexX = Math.floor(state.currentPxX / config.sensitivityX);
-            let rawIndexY = Math.floor(state.currentPxY / config.sensitivityY);
+        function updateImageDOM() {
+            // Asegurar límites (Clamping) para evitar errores
+            // Aunque el target puede irse al infinito, el current lo limitamos al mostrar
+            let safeX = Math.max(0, Math.min(config.totalX - 1, state.currentX));
+            let safeY = Math.max(0, Math.min(config.totalY - 1, state.currentY));
 
-            let safeX = Math.max(0, Math.min(config.totalX - 1, rawIndexX));
-            let safeY = Math.max(0, Math.min(config.totalY - 1, rawIndexY));
-
-            // Actualizar Imagen (Sin chequeos extra, fuerza bruta optimizada)
             let imageNumber = (safeX * config.totalY) + safeY;
             let numberString = imageNumber.toString().padStart(4, '0');
             const filename = `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
 
-            // Solo tocar el DOM si cambia el src (mejora rendimiento)
             if (!imgElement.src.includes(filename)) {
                 imgElement.src = filename;
             }
             
             if (demoActive) drawDemoCube(safeX, safeY, filename);
-
-            state.animationId = requestAnimationFrame(loopRender);
         }
 
         // ==========================================
-        // EVENTOS
+        // EVENTOS (Solo actualizan el OBJETIVO)
         // ==========================================
         function startDrag(clientX, clientY) {
             state.isDragging = true;
@@ -218,9 +218,33 @@
             const deltaX = clientX - state.startX;
             const deltaY = clientY - state.startY;
             
-            // Acumulamos el movimiento del dedo sin restricciones
-            state.targetPxX += deltaX;
-            state.targetPxY += deltaY;
+            // Acumulamos píxeles
+            state.dragAccumulatorX += deltaX;
+            state.dragAccumulatorY += deltaY;
+
+            // Calculamos cuántas fotos "OBJETIVO" deberíamos haber avanzado según el arrastre
+            // Eje X (Invertido)
+            let framesMovedX = Math.floor(-state.dragAccumulatorX / config.sensitivityX);
+            // Eje Y
+            let framesMovedY = Math.floor(state.dragAccumulatorY / config.sensitivityY);
+
+            // Actualizamos el Target Global (Partiendo de un centro relativo 8,8 si fuera reseteable, 
+            // pero aquí sumamos al acumulado)
+            
+            // Corrección: El target debe basarse en el acumulado total + el inicio
+            // Para simplificar, asumimos que empezamos en 8,8 y sumamos frames
+            let baseIndex = 8; 
+            
+            // Actualizamos el TARGET. El "current" lo perseguirá a su ritmo.
+            // Limitamos el target para que no se vaya a números locos (ej: -500) que tardarían años en volver
+            let potentialTargetX = baseIndex + framesMovedX;
+            let potentialTargetY = baseIndex + framesMovedY;
+
+            // Limitamos el objetivo a los bordes reales (0 a 15)
+            // Esto es importante: si arrastras muchísimo, el objetivo no pasa de 15,
+            // así la animación no se queda pegada intentando llegar a 100.
+            state.targetX = Math.max(0, Math.min(config.totalX - 1, potentialTargetX));
+            state.targetY = Math.max(0, Math.min(config.totalY - 1, potentialTargetY));
 
             state.startX = clientX;
             state.startY = clientY;
@@ -263,7 +287,7 @@
             ctx.strokeStyle = "#888"; ctx.lineWidth = 2;
             ctx.strokeRect(-100 + rotX, -100 + rotY, 200 - rotX/2, 200 - rotY/2);
             ctx.font = "14px sans-serif"; ctx.fillStyle = "#aaa"; ctx.textAlign = "center";
-            ctx.fillText("MODO FINAL", 0, -10);
+            ctx.fillText("MODO CINE", 0, -10);
             ctx.fillText(name.split('/').pop(), 0, 20);
             ctx.restore();
         }
