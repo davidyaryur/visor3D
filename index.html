@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Experiencia 3D Táctil</title>
+    <title>Experiencia 3D Pro</title>
     <style>
         body {
             background-color: #000;
@@ -26,13 +26,13 @@
         }
 
         #start-btn {
-            background: transparent; color: white; border: 2px solid white;
-            padding: 15px 40px; font-size: 1.2rem; text-transform: uppercase;
-            letter-spacing: 2px; cursor: pointer; border-radius: 50px;
+            background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5);
+            padding: 15px 40px; font-size: 1rem; text-transform: uppercase;
+            letter-spacing: 3px; cursor: pointer; border-radius: 50px;
             transition: all 0.3s;
         }
 
-        #start-btn:hover { background: white; color: black; box-shadow: 0 0 20px rgba(255,255,255,0.5); }
+        #start-btn:hover { background: white; color: black; border-color: white; }
 
         /* CONTENEDOR PRINCIPAL */
         .viewer-container {
@@ -43,7 +43,6 @@
             cursor: grab; touch-action: none; user-select: none;
             -webkit-tap-highlight-color: transparent; 
             opacity: 0; transition: opacity 1s ease;
-            /* Eliminada la perspectiva 3D */
             overflow: hidden;
         }
 
@@ -56,7 +55,8 @@
             object-fit: fill; 
             display: block; pointer-events: none; -webkit-user-drag: none;
             transform-origin: center center;
-            /* El transform inicial es escala 1 */
+            /* Importante: will-change ayuda a que el escalado sea suave */
+            will-change: transform;
             transform: scale(1);
         }
 
@@ -66,7 +66,7 @@
 <body>
 
     <div id="intro-overlay">
-        <button id="start-btn" onclick="iniciarExperiencia()">Iniciar Experiencia</button>
+        <button id="start-btn" onclick="iniciarExperiencia()">Iniciar</button>
     </div>
 
     <div class="viewer-container" id="container">
@@ -84,10 +84,11 @@
             folderPath: "renders/", 
             filePrefix: "modelo",   
             fileExtension: ".jpg",  
-            sensitivity: 65,
+            sensitivity: 65,  // Píxeles para cambiar 1 foto
             
-            // NUEVA CONFIGURACIÓN DE ZOOM
-            activeZoom: 1.08  // El tope de zoom al arrastrar (1.08 = 8% más grande)
+            // AJUSTE DE SUTILEZA
+            // 0.025 significa un aumento del 2.5% (muy sutil)
+            maxZoomDelta: 0.025 
         };
 
         // ==========================================
@@ -101,6 +102,10 @@
             startY: 0,
             accumulatedDragX: 0, 
             accumulatedDragY: 0,
+            
+            // Nueva variable para controlar la "fuerza" del zoom actual
+            currentDragMagnitude: 0, 
+            
             lastFrameX: -1, 
             lastFrameY: -1
         };
@@ -112,7 +117,7 @@
         let demoActive = false;
 
         // ==========================================
-        // MANEJO DE CARGA
+        // CARGA
         // ==========================================
         imgElement.onload = function() {
             demoActive = false;
@@ -139,40 +144,41 @@
         }
 
         // ==========================================
-        // LÓGICA CORE (Visualización)
+        // LÓGICA VISUAL (ZOOM + FRAMES)
         // ==========================================
         function updateVisuals() {
-            // Cálculo simple del frame basado en el arrastre acumulado
+            // 1. Calcular Frames (Imágenes)
             let rawFrameX = Math.floor(-state.accumulatedDragX / config.sensitivity);
             let rawFrameY = Math.floor(state.accumulatedDragY / config.sensitivity);
 
             let safeX = Math.max(0, Math.min(config.totalX - 1, rawFrameX));
             let safeY = Math.max(0, Math.min(config.totalY - 1, rawFrameY));
 
-            // Actualizar Imagen si cambió el frame
+            // Cambio de imagen
             if (safeX !== state.lastFrameX || safeY !== state.lastFrameY) {
                 let imageNumber = (safeX * config.totalY) + safeY;
                 let numberString = imageNumber.toString().padStart(4, '0');
                 const filename = `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
                 
-                if (!imgElement.src.includes(filename)) {
-                    imgElement.src = filename;
-                }
-                
+                if (!imgElement.src.includes(filename)) imgElement.src = filename;
                 if (demoActive) drawDemoCube(safeX, safeY, filename);
                 
                 state.lastFrameX = safeX;
                 state.lastFrameY = safeY;
             }
 
-            // APLICAR ZOOM SI SE ESTÁ ARRASTRANDO
-            // Si estamos arrastrando, mantenemos el zoom en el tope.
-            // La transición CSS en startDrag se encarga de llegar ahí suavemente.
-            if (state.isDragging) {
-                 imgElement.style.transform = `scale(${config.activeZoom})`;
-            }
-            // Nota: No necesitamos un 'else' aquí para volver a scale(1)
-            // porque eso lo maneja stopDrag con su propia transición.
+            // 2. CÁLCULO DEL ZOOM PROGRESIVO
+            // Calculamos cuánto nos hemos movido desde que hicimos click (Magnitud absoluta)
+            // Usamos Pitágoras simple o solo la mayor distancia eje para determinar la "intensidad"
+            // Aquí usamos la distancia total recorrida en este "gesto"
+            
+            // Normalizamos: 0 = nada, 1 = hemos recorrido la distancia de 1 foto (sensitivity)
+            let progress = Math.min(state.currentDragMagnitude / config.sensitivity, 1.0);
+            
+            // Ecuación de escala: 1 + (progreso * fuerza)
+            let currentScale = 1 + (progress * config.maxZoomDelta);
+            
+            imgElement.style.transform = `scale(${currentScale})`;
         }
 
         // ==========================================
@@ -182,23 +188,34 @@
             state.isDragging = true;
             state.startX = clientX;
             state.startY = clientY;
+            state.currentDragMagnitude = 0; // Reseteamos el contador de "tensión"
+            
             container.style.cursor = 'grabbing';
             
-            // === EFECTO ZOOM AL TOCAR ===
-            // Transición rápida de entrada para que se sienta reactivo "al toque"
-            imgElement.style.transition = 'transform 0.2s ease-out';
-            // El objetivo es el zoom activo, updateVisuals lo mantendrá ahí
-            imgElement.style.transform = `scale(${config.activeZoom})`;
+            // IMPORTANTE: Quitamos transición al empezar para que el zoom siga al dedo milimétricamente
+            imgElement.style.transition = 'none';
         }
 
         function onDrag(clientX, clientY) {
             if (!state.isDragging) return;
+            
             const deltaX = clientX - state.startX;
             const deltaY = clientY - state.startY;
+            
+            // Acumuladores para el cambio de foto
             state.accumulatedDragX += deltaX;
             state.accumulatedDragY += deltaY;
+            
+            // Calculamos cuánto nos hemos alejado del punto inicial del clic actual
+            // Esto define la intensidad del zoom
+            // Usamos Math.abs de delta acumulado temporalmente para este gesto no funcionaría bien
+            // Mejor: Sumamos el movimiento absoluto para "llenar la barra de energía"
+            state.currentDragMagnitude += Math.sqrt(deltaX*deltaX + deltaY*deltaY); 
+
+            // Actualizamos referencias para el siguiente frame
             state.startX = clientX;
             state.startY = clientY;
+            
             updateVisuals();
         }
 
@@ -206,19 +223,18 @@
             state.isDragging = false;
             container.style.cursor = 'grab';
             
-            // === EFECTO ZOOM AL SOLTAR ===
-            // Transición más lenta y suave de salida para relajar
-            imgElement.style.transition = 'transform 0.4s ease-in-out';
-            // Regresar al tamaño original
+            // Al soltar, activamos la transición suave para que el zoom "se desinfle" elegante
+            imgElement.style.transition = 'transform 0.5s ease-in-out';
             imgElement.style.transform = `scale(1)`;
         }
 
-        // Listeners
+        // Listeners Mouse
         container.addEventListener('mousedown', (e) => { e.preventDefault(); startDrag(e.clientX, e.clientY); });
         window.addEventListener('mousemove', (e) => { if(state.isDragging) onDrag(e.clientX, e.clientY); });
         window.addEventListener('mouseup', stopDrag);
         window.addEventListener('mouseleave', stopDrag);
 
+        // Listeners Táctil
         container.addEventListener('touchstart', (e) => { const t = e.touches[0]; startDrag(t.clientX, t.clientY); }, { passive: false });
         window.addEventListener('touchmove', (e) => { if (state.isDragging) { const t = e.touches[0]; onDrag(t.clientX, t.clientY); } }, { passive: false });
         window.addEventListener('touchend', stopDrag);
@@ -240,19 +256,23 @@
             ctx.clearRect(0, 0, w, h);
             ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
             ctx.save(); ctx.translate(w/2, h/2);
-            // El zoom también aplica al demo si se arrastra
-            if(state.isDragging) ctx.scale(config.activeZoom, config.activeZoom);
+            
+            // Aplicar el mismo zoom al demo
+            let progress = Math.min(state.currentDragMagnitude / config.sensitivity, 1.0);
+            let s = 1 + (progress * config.maxZoomDelta);
+            ctx.scale(s, s);
+
             ctx.scale(1.56, 1); 
             const rotX = (x - 8) * 15; const rotY = (y - 8) * 10;
-            ctx.strokeStyle = "#666"; ctx.lineWidth = 2;
+            ctx.strokeStyle = "#444"; ctx.lineWidth = 2;
             ctx.strokeRect(-100 + rotX, -100 + rotY, 200 - rotX/2, 200 - rotY/2);
-            ctx.font = "14px sans-serif"; ctx.fillStyle = "#888"; ctx.textAlign = "center";
-            ctx.fillText("MODO TÁCTIL (Sin Giro)", 0, -10);
+            ctx.font = "14px sans-serif"; ctx.fillStyle = "#666"; ctx.textAlign = "center";
+            ctx.fillText("MODO PROGRESIVO", 0, -10);
             ctx.restore();
         }
         window.addEventListener('resize', () => { if(demoActive) { demoCanvas.width = container.clientWidth; demoCanvas.height = container.clientHeight; }});
 
-        // INICIALIZACIÓN
+        // Inicio
         state.accumulatedDragX = -(state.currentX * config.sensitivity);
         state.accumulatedDragY = state.currentY * config.sensitivity;
         updateVisuals();
