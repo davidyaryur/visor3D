@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Visor 3D</title>
+    <style>
+        /* === ESTILOS GENERALES === */
+        body {
+            background-color: #0d0d0d; 
+            margin: 0;
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden; 
+        }
+
+        /* === CONTENEDOR DEL VISOR === */
+        .viewer-container {
+            position: relative;
+            
+            /* DIMENSIONES Y PROPORCIÓN 1.56 */
+            width: 90vw;            
+            max-width: 1400px;      
+            aspect-ratio: 1.56 / 1; 
+            
+            background-color: #000;
+            border-radius: 4px;     
+            box-shadow: 0 20px 60px rgba(0,0,0,0.8); 
+            
+            /* Interacción */
+            cursor: grab; 
+            touch-action: none; 
+            user-select: none;
+            -webkit-tap-highlight-color: transparent; 
+        }
+
+        .viewer-container:active {
+            cursor: grabbing;
+        }
+
+        /* === IMAGEN (RENDER) === */
+        #product-image {
+            width: 100%;
+            height: 100%;
+            /* CAMBIO APLICADO: 'fill' estira la imagen para llenar todo */
+            object-fit: fill; 
+            display: block;
+            pointer-events: none; 
+            -webkit-user-drag: none;
+        }
+
+        /* === SOLO MODO DEMO === */
+        #demo-canvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="viewer-container" id="container">
+        <canvas id="demo-canvas"></canvas>
+        <img id="product-image" src="" alt="Modelo 3D" onerror="activarModoDemo()">
+    </div>
+
+    <script>
+        // ==========================================
+        // CONFIGURACIÓN
+        // ==========================================
+        const config = {
+            totalX: 16,        
+            totalY: 16,        
+            folderPath: "renders/", 
+            filePrefix: "modelo",   
+            fileExtension: ".jpg",  
+            sensitivity: 15    
+        };
+
+        // ==========================================
+        // VARIABLES DE ESTADO
+        // ==========================================
+        let state = {
+            currentX: 8, 
+            currentY: 8,
+            isDragging: false,
+            startX: 0,
+            startY: 0,
+            initialIndexX: 0,
+            initialIndexY: 0
+        };
+
+        const container = document.getElementById('container');
+        const imgElement = document.getElementById('product-image');
+        const demoCanvas = document.getElementById('demo-canvas');
+
+        // ==========================================
+        // LÓGICA DE ACTUALIZACIÓN
+        // ==========================================
+        function updateImage() {
+            let x = Math.max(0, Math.min(config.totalX - 1, state.currentX));
+            let y = Math.max(0, Math.min(config.totalY - 1, state.currentY));
+
+            // Fórmula que inicia en modelo0000.jpg
+            let imageNumber = (x * config.totalY) + y;
+            
+            let numberString = imageNumber.toString().padStart(4, '0');
+
+            const filename = `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
+            
+            if (!imgElement.src.includes(filename)) {
+                imgElement.src = filename;
+            }
+
+            if (demoActive) drawDemoCube(x, y, filename);
+        }
+
+        // ==========================================
+        // EVENTOS
+        // ==========================================
+        function startDrag(clientX, clientY) {
+            state.isDragging = true;
+            state.startX = clientX;
+            state.startY = clientY;
+            state.initialIndexX = state.currentX;
+            state.initialIndexY = state.currentY;
+            container.style.cursor = 'grabbing';
+        }
+
+        function onDrag(clientX, clientY) {
+            if (!state.isDragging) return;
+
+            const deltaX = clientX - state.startX;
+            const deltaY = clientY - state.startY;
+
+            const framesMovedX = Math.floor(deltaX / config.sensitivity); 
+            const framesMovedY = Math.floor(deltaY / config.sensitivity);
+
+            state.currentX = state.initialIndexX - framesMovedX; 
+            state.currentY = state.initialIndexY + framesMovedY; 
+
+            updateImage();
+        }
+
+        function stopDrag() {
+            state.isDragging = false;
+            container.style.cursor = 'grab';
+            state.currentX = Math.max(0, Math.min(config.totalX - 1, state.currentX));
+            state.currentY = Math.max(0, Math.min(config.totalY - 1, state.currentY));
+        }
+
+        // Mouse
+        container.addEventListener('mousedown', (e) => { e.preventDefault(); startDrag(e.clientX, e.clientY); });
+        window.addEventListener('mousemove', (e) => { if(state.isDragging) onDrag(e.clientX, e.clientY); });
+        window.addEventListener('mouseup', stopDrag);
+
+        // Táctil
+        container.addEventListener('touchstart', (e) => { const t = e.touches[0]; startDrag(t.clientX, t.clientY); }, { passive: false });
+        window.addEventListener('touchmove', (e) => { if (state.isDragging) { const t = e.touches[0]; onDrag(t.clientX, t.clientY); } }, { passive: false });
+        window.addEventListener('touchend', stopDrag);
+
+        // ==========================================
+        // MODO DEMO
+        // ==========================================
+        let demoActive = false;
+        function activarModoDemo() {
+            demoActive = true;
+            imgElement.style.display = 'none';
+            demoCanvas.style.display = 'block';
+            demoCanvas.width = container.clientWidth;
+            demoCanvas.height = container.clientHeight;
+            updateImage();
+        }
+
+        function drawDemoCube(x, y, name) {
+            const ctx = demoCanvas.getContext('2d');
+            const w = demoCanvas.width; const h = demoCanvas.height;
+            
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
+            ctx.save(); ctx.translate(w/2, h/2);
+            
+            // Estiramos también el dibujo demo para simular el efecto
+            ctx.scale(1.56, 1); 
+
+            const rotX = (x - 8) * 15; 
+            const rotY = (y - 8) * 10;
+            
+            ctx.strokeStyle = "#444"; ctx.lineWidth = 2;
+            ctx.strokeRect(-100 + rotX, -100 + rotY, 200 - rotX/2, 200 - rotY/2);
+            
+            ctx.font = "14px sans-serif"; ctx.fillStyle = "#666"; ctx.textAlign = "center";
+            ctx.fillText("VISTA PREVIA ESTIRADA", 0, -10);
+            ctx.restore();
+        }
+
+        updateImage();
+        window.addEventListener('resize', () => { if(demoActive) activarModoDemo(); });
+
+    </script>
+</body>
+</html>
