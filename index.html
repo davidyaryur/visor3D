@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Visor 3D</title>
+    <title>Experiencia 3D Inmersiva</title>
     <style>
         /* === ESTILOS GENERALES === */
         body {
-            background-color: #0d0d0d; 
+            background-color: #000; /* Fondo totalmente negro */
             margin: 0;
             height: 100vh;
             width: 100vw;
@@ -15,6 +15,40 @@
             align-items: center;
             justify-content: center;
             overflow: hidden; 
+            font-family: sans-serif;
+        }
+
+        /* === PANTALLA DE INICIO (OVERLAY) === */
+        #intro-overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background-color: #000;
+            z-index: 999; /* Por encima de todo */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.5s ease;
+        }
+
+        #start-btn {
+            background: transparent;
+            color: white;
+            border: 2px solid white;
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border-radius: 50px;
+        }
+
+        #start-btn:hover {
+            background: white;
+            color: black;
+            box-shadow: 0 0 20px rgba(255,255,255,0.5);
         }
 
         /* === CONTENEDOR DEL VISOR === */
@@ -22,19 +56,26 @@
             position: relative;
             
             /* DIMENSIONES Y PROPORCIÓN 1.56 */
-            width: 90vw;            
-            max-width: 1400px;      
+            width: 100%;            
+            max-width: 100%;      
+            /* En pantalla completa queremos aprovechar todo, pero manteniendo el ratio si es posible
+               o dejamos que el CSS object-fit haga el trabajo sucio */
             aspect-ratio: 1.56 / 1; 
             
             background-color: #000;
-            border-radius: 4px;     
-            box-shadow: 0 20px 60px rgba(0,0,0,0.8); 
             
             /* Interacción */
             cursor: grab; 
             touch-action: none; 
             user-select: none;
             -webkit-tap-highlight-color: transparent; 
+            opacity: 0; /* Empieza invisible hasta que damos click */
+            transition: opacity 1s ease;
+        }
+
+        /* Cuando está activo se ve */
+        .viewer-container.active {
+            opacity: 1;
         }
 
         .viewer-container:active {
@@ -45,8 +86,7 @@
         #product-image {
             width: 100%;
             height: 100%;
-            /* CAMBIO APLICADO: 'fill' estira la imagen para llenar todo */
-            object-fit: fill; 
+            object-fit: fill; /* ESTIRA LA IMAGEN PARA LLENAR EL HUECO */
             display: block;
             pointer-events: none; 
             -webkit-user-drag: none;
@@ -59,6 +99,10 @@
     </style>
 </head>
 <body>
+
+    <div id="intro-overlay">
+        <button id="start-btn" onclick="iniciarExperiencia()">Iniciar Experiencia</button>
+    </div>
 
     <div class="viewer-container" id="container">
         <canvas id="demo-canvas"></canvas>
@@ -75,7 +119,11 @@
             folderPath: "renders/", 
             filePrefix: "modelo",   
             fileExtension: ".jpg",  
-            sensitivity: 15    
+            
+            // AJUSTE DE PESO: 
+            // 65 píxeles de arrastre = 1 cambio de imagen.
+            // Antes era 15. Ahora es más de 4 veces más pesado.
+            sensitivity: 65    
         };
 
         // ==========================================
@@ -94,6 +142,32 @@
         const container = document.getElementById('container');
         const imgElement = document.getElementById('product-image');
         const demoCanvas = document.getElementById('demo-canvas');
+        const introOverlay = document.getElementById('intro-overlay');
+
+        // ==========================================
+        // FUNCION PANTALLA COMPLETA
+        // ==========================================
+        function iniciarExperiencia() {
+            const docEl = document.documentElement;
+
+            // Solicitar Pantalla Completa (Soporte cruzado navegadores)
+            if (docEl.requestFullscreen) {
+                docEl.requestFullscreen();
+            } else if (docEl.mozRequestFullScreen) { /* Firefox */
+                docEl.mozRequestFullScreen();
+            } else if (docEl.webkitRequestFullscreen) { /* Chrome, Safari and Opera */
+                docEl.webkitRequestFullscreen();
+            } else if (docEl.msRequestFullscreen) { /* IE/Edge */
+                docEl.msRequestFullscreen();
+            }
+
+            // Ocultar intro y mostrar visor
+            introOverlay.style.opacity = '0';
+            setTimeout(() => {
+                introOverlay.style.display = 'none';
+                container.classList.add('active');
+            }, 500);
+        }
 
         // ==========================================
         // LÓGICA DE ACTUALIZACIÓN
@@ -102,9 +176,7 @@
             let x = Math.max(0, Math.min(config.totalX - 1, state.currentX));
             let y = Math.max(0, Math.min(config.totalY - 1, state.currentY));
 
-            // Fórmula que inicia en modelo0000.jpg
             let imageNumber = (x * config.totalY) + y;
-            
             let numberString = imageNumber.toString().padStart(4, '0');
 
             const filename = `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
@@ -134,6 +206,8 @@
             const deltaX = clientX - state.startX;
             const deltaY = clientY - state.startY;
 
+            // Al dividir por un número más grande (65), el resultado es menor,
+            // por lo que cambian menos frames = Movimiento más pesado.
             const framesMovedX = Math.floor(deltaX / config.sensitivity); 
             const framesMovedY = Math.floor(deltaY / config.sensitivity);
 
@@ -180,8 +254,6 @@
             ctx.clearRect(0, 0, w, h);
             ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
             ctx.save(); ctx.translate(w/2, h/2);
-            
-            // Estiramos también el dibujo demo para simular el efecto
             ctx.scale(1.56, 1); 
 
             const rotX = (x - 8) * 15; 
@@ -191,7 +263,7 @@
             ctx.strokeRect(-100 + rotX, -100 + rotY, 200 - rotX/2, 200 - rotY/2);
             
             ctx.font = "14px sans-serif"; ctx.fillStyle = "#666"; ctx.textAlign = "center";
-            ctx.fillText("VISTA PREVIA", 0, -10);
+            ctx.fillText("VISTA PREVIA ESTIRADA", 0, -10);
             ctx.restore();
         }
 
@@ -200,5 +272,4 @@
 
     </script>
 </body>
-
 </html>
