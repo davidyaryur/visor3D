@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Visor 3D Final</title>
+    <title>Visor 3D Gyro</title>
     <style>
         body {
             background-color: #000;
@@ -17,7 +17,6 @@
             font-family: sans-serif;
         }
 
-        /* PANTALLA DE INICIO */
         #intro-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background-color: #000; z-index: 999;
@@ -34,7 +33,6 @@
 
         #start-btn:hover { background: white; color: black; }
 
-        /* CONTENEDOR */
         .viewer-container {
             position: relative;
             width: 100%; max-width: 100%;
@@ -49,34 +47,41 @@
         .viewer-container.active { opacity: 1; }
         .viewer-container:active { cursor: grabbing; }
 
-        /* IMAGEN */
         #product-image {
             width: 100%; height: 100%;
             object-fit: fill; 
             display: block; pointer-events: none; -webkit-user-drag: none;
             transform-origin: center center;
-            /* Transición suave para entrar en tensión y relajarse */
             transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
             transform: scale(1);
         }
         
-        /* ESTADO DE TENSIÓN (TOPE) */
-        #product-image.at-edge {
-            transform: scale(1.015); /* 1.5% de Zoom */
-        }
+        #product-image.at-edge { transform: scale(1.015); }
 
         #demo-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; pointer-events: none; }
+        
+        /* Indicador de Gyro Activo */
+        .gyro-indicator {
+            position: absolute; top: 20px; right: 20px;
+            width: 10px; height: 10px; border-radius: 50%;
+            background-color: #00ff00; box-shadow: 0 0 10px #00ff00;
+            opacity: 0; transition: opacity 0.5s; pointer-events: none;
+        }
+        .gyro-indicator.on { opacity: 0.5; }
+
     </style>
 </head>
 <body>
 
     <div id="intro-overlay">
-        <button id="start-btn" onclick="iniciarExperiencia()">Iniciar</button>
+        <button id="start-btn" onclick="solicitarPermisosYArrancar()">Iniciar Experiencia</button>
+        <p style="color: #666; margin-top: 20px; font-size: 0.8rem;">Inclina tu teléfono o desliza el dedo</p>
     </div>
 
     <div class="viewer-container" id="container">
         <canvas id="demo-canvas"></canvas>
         <img id="product-image" src="" alt="Modelo 3D">
+        <div class="gyro-indicator" id="gyro-dot"></div>
     </div>
 
     <script>
@@ -89,25 +94,34 @@
             folderPath: "renders/", 
             filePrefix: "modelo",   
             fileExtension: ".jpg",  
-            thresholdPx: 5
+            thresholdPx: 5, // Para el dedo
+            
+            // CONFIGURACIÓN GIROSCOPIO
+            tiltThreshold: 15, // Grados de inclinación para activar el cambio
+            resetThreshold: 5  // Grados para considerar que volvió al centro
         };
 
         // ==========================================
-        // VARIABLES DE ESTADO
+        // ESTADO
         // ==========================================
         let state = {
             currentX: 8, 
             currentY: 8,
             isDragging: false,
-            startX: 0,
-            startY: 0,
-            hasMovedInThisStroke: false
+            startX: 0, startY: 0,
+            hasMovedInThisStroke: false,
+
+            // ESTADO GIROSCOPIO
+            gyroActive: false,
+            isTiltedX: false, // ¿Ya se disparó el evento horizontal?
+            isTiltedY: false  // ¿Ya se disparó el evento vertical?
         };
 
         const container = document.getElementById('container');
         const imgElement = document.getElementById('product-image');
         const demoCanvas = document.getElementById('demo-canvas');
         const introOverlay = document.getElementById('intro-overlay');
+        const gyroDot = document.getElementById('gyro-dot');
         let demoActive = false;
 
         // ==========================================
@@ -123,9 +137,31 @@
         };
 
         // ==========================================
-        // INICIO
+        // INICIO + PERMISOS IOS (CRUCIAL)
         // ==========================================
-        function iniciarExperiencia() {
+        function solicitarPermisosYArrancar() {
+            // Intentar pedir permiso para iOS 13+
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation);
+                            state.gyroActive = true;
+                            gyroDot.classList.add('on');
+                        }
+                        iniciarInterfaz();
+                    })
+                    .catch(console.error);
+            } else {
+                // No es iOS 13+ o es Android (usualmente no pide permiso o funciona directo)
+                window.addEventListener('deviceorientation', handleOrientation);
+                state.gyroActive = true;
+                gyroDot.classList.add('on');
+                iniciarInterfaz();
+            }
+        }
+
+        function iniciarInterfaz() {
             const docEl = document.documentElement;
             if (docEl.requestFullscreen) docEl.requestFullscreen();
             else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen();
@@ -139,103 +175,135 @@
         }
 
         // ==========================================
-        // HELPER: Nombre Archivo
+        // LÓGICA DE ACTUALIZACIÓN
         // ==========================================
         function getFilename(x, y) {
             let safeX = Math.max(0, Math.min(config.totalX - 1, x));
             let safeY = Math.max(0, Math.min(config.totalY - 1, y));
             let imageNumber = (safeX * config.totalY) + safeY;
-            let numberString = imageNumber.toString().padStart(4, '0');
-            return `${config.folderPath}${config.filePrefix}${numberString}${config.fileExtension}`;
+            return `${config.folderPath}${config.filePrefix}${imageNumber.toString().padStart(4, '0')}${config.fileExtension}`;
         }
 
-        // ==========================================
-        // ACTUALIZACIÓN + PRECARGA
-        // ==========================================
         function updateImageDOM(newX, newY) {
             const filename = getFilename(newX, newY);
-
             if (!imgElement.src.includes(filename)) {
                 imgElement.src = filename;
                 state.currentX = newX;
                 state.currentY = newY;
             }
-            
             if (demoActive) drawDemoCube(newX, newY, filename);
 
-            // Precarga de vecinos
-            const neighbors = [
-                {x: newX + 1, y: newY}, {x: newX - 1, y: newY},
-                {x: newX, y: newY + 1}, {x: newX, y: newY - 1}
-            ];
+            // Precarga
+            const neighbors = [{x: newX+1, y: newY}, {x: newX-1, y: newY}, {x: newX, y: newY+1}, {x: newX, y: newY-1}];
             neighbors.forEach(n => {
                 if (n.x >= 0 && n.x < config.totalX && n.y >= 0 && n.y < config.totalY) {
-                    const preloadImg = new Image();
-                    preloadImg.src = getFilename(n.x, n.y);
+                    (new Image()).src = getFilename(n.x, n.y);
                 }
             });
         }
 
+        function triggerEdgeFeedback() {
+            imgElement.classList.add('at-edge');
+            setTimeout(() => imgElement.classList.remove('at-edge'), 150);
+        }
+
         // ==========================================
-        // LOGICA DE EVENTOS (TENSIÓN MANTENIDA)
+        // LÓGICA DEL GIROSCOPIO (GATILLO)
+        // ==========================================
+        function handleOrientation(event) {
+            // Gamma: Inclinación Izquierda(-90) a Derecha(90)
+            // Beta: Inclinación Frente(-180) a Atrás(180)
+            
+            // Limitamos Beta para evitar saltos locos al poner el tlf plano
+            let tiltX = event.gamma; // Horizontal
+            let tiltY = event.beta;  // Vertical
+
+            // --- EJE X (HORIZONTAL) ---
+            if (tiltX > config.tiltThreshold) { // Inclinado a DERECHA
+                if (!state.isTiltedX) {
+                    // Disparo único
+                    if (state.currentX > 0) updateImageDOM(state.currentX - 1, state.currentY);
+                    else triggerEdgeFeedback();
+                    state.isTiltedX = true; // Bloqueado hasta volver al centro
+                }
+            } else if (tiltX < -config.tiltThreshold) { // Inclinado a IZQUIERDA
+                if (!state.isTiltedX) {
+                    if (state.currentX < config.totalX - 1) updateImageDOM(state.currentX + 1, state.currentY);
+                    else triggerEdgeFeedback();
+                    state.isTiltedX = true;
+                }
+            } else if (Math.abs(tiltX) < config.resetThreshold) {
+                // Volvió al CENTRO -> Resetear gatillo
+                state.isTiltedX = false;
+            }
+
+            // --- EJE Y (VERTICAL) ---
+            // Nota: Restamos 45 aprox porque la gente sostiene el tlf inclinado, no plano.
+            // O usamos cambio relativo. Para simplificar, usaremos Beta directo pero con cuidado.
+            // Lo ideal es calibrar al inicio, pero aquí usaremos umbrales simples.
+            // Asumimos que sostienes el teléfono a unos 45 grados (Beta = 45).
+            // Arriba < 30, Abajo > 60.
+            
+            // Vamos a usar lógica relativa simple: 
+            // Si Beta cambia bruscamente. Pero para "gatillo" necesitamos referencia.
+            // Usemos un rango "seguro" de 30 a 60 grados como centro vertical.
+            
+            // SIMPLIFICACIÓN: Beta > 60 (Abajo), Beta < 30 (Arriba)
+            // Ajusta estos valores según sientas la comodidad
+            
+            /* Lógica Vertical Gyro (Opcional, a veces marea, descomentar si se desea) 
+            if (tiltY > 60) { // Inclinado hacia ti (Abajo)
+                if (!state.isTiltedY) {
+                     if (state.currentY < config.totalY - 1) updateImageDOM(state.currentX, state.currentY + 1);
+                     else triggerEdgeFeedback();
+                     state.isTiltedY = true;
+                }
+            } else if (tiltY < 30) { // Inclinado hacia el frente (Arriba)
+                if (!state.isTiltedY) {
+                    if (state.currentY > 0) updateImageDOM(state.currentX, state.currentY - 1);
+                    else triggerEdgeFeedback();
+                    state.isTiltedY = true;
+                }
+            } else if (tiltY > 35 && tiltY < 55) {
+                state.isTiltedY = false;
+            }
+            */
+        }
+
+
+        // ==========================================
+        // LÓGICA TÁCTIL (Mantiene la que ya funcionaba)
         // ==========================================
         function startDrag(clientX, clientY) {
             state.isDragging = true;
-            state.startX = clientX;
-            state.startY = clientY;
+            state.startX = clientX; state.startY = clientY;
             state.hasMovedInThisStroke = false;
             container.style.cursor = 'grabbing';
-            
-            // Importante: No quitamos la tensión aquí para evitar saltos raros,
-            // pero el stopDrag anterior ya debió haber limpiado todo.
         }
 
         function onDrag(clientX, clientY) {
             if (!state.isDragging || state.hasMovedInThisStroke) return;
-
             const deltaX = clientX - state.startX;
             const deltaY = clientY - state.startY;
 
             if (Math.abs(deltaX) > config.thresholdPx || Math.abs(deltaY) > config.thresholdPx) {
-                
-                let moved = false; 
-
-                // Decisión de eje
+                let moved = false;
                 if (Math.abs(deltaX) > Math.abs(deltaY)) {
-                    // HORIZONTAL
                     if (deltaX > 0) { 
-                        if (state.currentX > 0) {
-                            updateImageDOM(state.currentX - 1, state.currentY);
-                            moved = true;
-                        }
+                        if (state.currentX > 0) { updateImageDOM(state.currentX - 1, state.currentY); moved = true; }
                     } else { 
-                        if (state.currentX < config.totalX - 1) {
-                            updateImageDOM(state.currentX + 1, state.currentY);
-                            moved = true;
-                        }
+                        if (state.currentX < config.totalX - 1) { updateImageDOM(state.currentX + 1, state.currentY); moved = true; }
                     }
                 } else {
-                    // VERTICAL
                     if (deltaY > 0) { 
-                        if (state.currentY < config.totalY - 1) {
-                            updateImageDOM(state.currentX, state.currentY + 1);
-                            moved = true;
-                        }
+                        if (state.currentY < config.totalY - 1) { updateImageDOM(state.currentX, state.currentY + 1); moved = true; }
                     } else { 
-                        if (state.currentY > 0) {
-                            updateImageDOM(state.currentX, state.currentY - 1);
-                            moved = true;
-                        }
+                        if (state.currentY > 0) { updateImageDOM(state.currentX, state.currentY - 1); moved = true; }
                     }
                 }
-
-                // SI CHOCAMOS CON EL BORDE (No nos movimos)
                 if (!moved) {
-                    // APLICAMOS TENSIÓN Y LA DEJAMOS AHI
                     imgElement.classList.add('at-edge');
                 }
-
-                // Bloquear futuros cambios en este stroke
                 state.hasMovedInThisStroke = true;
             }
         }
@@ -243,10 +311,6 @@
         function stopDrag() {
             state.isDragging = false;
             container.style.cursor = 'grab';
-            
-            // LIBERAR TENSIÓN
-            // Al soltar el dedo, quitamos la clase, haciendo que la imagen
-            // regrese suavemente a su tamaño original.
             imgElement.classList.remove('at-edge');
         }
 
@@ -255,35 +319,25 @@
         window.addEventListener('mousemove', (e) => { if(state.isDragging) onDrag(e.clientX, e.clientY); });
         window.addEventListener('mouseup', stopDrag);
         window.addEventListener('mouseleave', stopDrag);
-
         container.addEventListener('touchstart', (e) => { const t = e.touches[0]; startDrag(t.clientX, t.clientY); }, { passive: false });
         window.addEventListener('touchmove', (e) => { if (state.isDragging) { const t = e.touches[0]; onDrag(t.clientX, t.clientY); } }, { passive: false });
         window.addEventListener('touchend', stopDrag);
 
-
-        // ==========================================
         // MODO DEMO
-        // ==========================================
         function activarModoDemo() {
-            demoActive = true;
-            imgElement.style.display = 'none';
-            demoCanvas.style.display = 'block';
-            demoCanvas.width = container.clientWidth;
-            demoCanvas.height = container.clientHeight;
+            demoActive = true; imgElement.style.display = 'none'; demoCanvas.style.display = 'block';
+            demoCanvas.width = container.clientWidth; demoCanvas.height = container.clientHeight;
         }
         function drawDemoCube(x, y, name) {
-            const ctx = demoCanvas.getContext('2d');
-            const w = demoCanvas.width; const h = demoCanvas.height;
-            ctx.clearRect(0, 0, w, h);
-            ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
-            ctx.save(); ctx.translate(w/2, h/2);
+            const ctx = demoCanvas.getContext('2d'); ctx.clearRect(0, 0, demoCanvas.width, demoCanvas.height);
+            ctx.fillStyle = "#111"; ctx.fillRect(0,0,demoCanvas.width, demoCanvas.height);
+            ctx.save(); ctx.translate(demoCanvas.width/2, demoCanvas.height/2);
             if(imgElement.classList.contains('at-edge')) ctx.scale(1.015, 1.015);
             ctx.scale(1.56, 1); 
-            const rotX = (x - 8) * 15; const rotY = (y - 8) * 10;
-            ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; 
-            ctx.strokeRect(-100 + rotX, -100 + rotY, 200 - rotX/2, 200 - rotY/2);
-            ctx.font = "14px sans-serif"; ctx.fillStyle = "#fff"; ctx.textAlign = "center";
-            ctx.fillText("TENSIÓN AL BORDE", 0, -10);
+            ctx.strokeStyle = "#0f0"; ctx.lineWidth = 4; 
+            ctx.strokeRect(-100 + ((x-8)*10), -100 + ((y-8)*5), 200, 200);
+            ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+            ctx.fillText("GYRO + TOUCH", 0, 0);
             ctx.restore();
         }
         window.addEventListener('resize', () => { if(demoActive) { demoCanvas.width = container.clientWidth; demoCanvas.height = container.clientHeight; }});
