@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Visor 3D Taps</title>
+    <title>Visor 3D Final</title>
     <style>
         body {
             background-color: #000;
@@ -16,10 +16,10 @@
             overflow: hidden; 
             font-family: 'Segoe UI', sans-serif;
             user-select: none;
-            -webkit-tap-highlight-color: transparent; /* Quita el flash gris al tocar en Android */
+            -webkit-tap-highlight-color: transparent; 
         }
 
-        /* === PANTALLA DE INICIO (Botón) === */
+        /* === PANTALLA DE INICIO === */
         #intro-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background-color: #000; z-index: 999;
@@ -35,12 +35,12 @@
         }
         #start-btn:hover { background: white; color: black; }
 
-        /* === GUIAS VISUALES (Flechas) === */
+        /* === GUÍAS VISUALES === */
         #guide-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; /* Dejar pasar los clics */
+            pointer-events: none; 
             z-index: 50;
-            display: none; /* Se activa al iniciar */
+            display: none; 
             opacity: 1;
             transition: opacity 0.5s ease;
         }
@@ -67,9 +67,9 @@
         }
 
         @keyframes pulse {
-            0% { opacity: 0.2; transform: scale(1) translate(...); }
-            50% { opacity: 0.8; transform: scale(1.1) translate(...); }
-            100% { opacity: 0.2; transform: scale(1) translate(...); }
+            0% { opacity: 0.2; transform: scale(1); }
+            50% { opacity: 0.8; transform: scale(1.1); }
+            100% { opacity: 0.2; transform: scale(1); }
         }
 
         /* === VISOR === */
@@ -78,7 +78,6 @@
             width: 100%; max-width: 100%;
             aspect-ratio: 1.56 / 1; 
             background-color: #000;
-            /* Cursor pointer para indicar que es cliqueable */
             cursor: pointer; 
             overflow: hidden;
             opacity: 0; transition: opacity 1s ease;
@@ -91,15 +90,13 @@
             object-fit: fill; 
             display: block; pointer-events: none;
             transform-origin: center center;
-            transition: transform 0.15s ease-out; /* Rebote rápido */
+            /* Solo usamos transición para el efecto de borde/tope */
+            transition: transform 0.15s ease-out; 
             transform: scale(1);
         }
         
-        /* Efecto rebote (tope) */
+        /* Efecto SOLO para cuando se llega al límite */
         #product-image.at-edge { transform: scale(1.02); }
-        
-        /* Efecto toque exitoso (sutil zoom in/out rápido) */
-        #product-image.tap-effect { transform: scale(0.99); }
 
         #demo-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; pointer-events: none; }
     </style>
@@ -142,7 +139,7 @@
         let state = {
             currentX: 8, 
             currentY: 8,
-            firstInteractionDone: false // Para saber cuándo ocultar las guías
+            firstInteractionDone: false 
         };
 
         const container = document.getElementById('container');
@@ -176,17 +173,13 @@
             setTimeout(() => {
                 introOverlay.style.display = 'none';
                 container.classList.add('active');
-                
-                // Mostrar guías
                 guideOverlay.style.display = 'block';
-                
-                // Cargar imagen inicial
                 updateImageDOM(state.currentX, state.currentY); 
             }, 500);
         }
 
         // ==========================================
-        // HELPER: Nombres y Precarga
+        // ACTUALIZACIÓN DE IMAGEN
         // ==========================================
         function getFilename(x, y) {
             let safeX = Math.max(0, Math.min(config.totalX - 1, x));
@@ -204,7 +197,7 @@
             }
             if (demoActive) drawDemoCube(newX, newY, filename);
 
-            // Precarga de los 4 vecinos
+            // Precarga de vecinos
             const neighbors = [{x: newX+1, y: newY}, {x: newX-1, y: newY}, {x: newX, y: newY+1}, {x: newX, y: newY-1}];
             neighbors.forEach(n => {
                 if (n.x >= 0 && n.x < config.totalX && n.y >= 0 && n.y < config.totalY) {
@@ -214,20 +207,11 @@
         }
 
         // ==========================================
-        // FEEDBACK VISUAL (Animaciones)
+        // FEEDBACK DE LÍMITE (Solo cuando choca)
         // ==========================================
         function triggerEdgeFeedback() {
-            // Animación de rebote (Tope)
             imgElement.classList.add('at-edge');
             setTimeout(() => imgElement.classList.remove('at-edge'), 150);
-        }
-
-        function triggerSuccessFeedback() {
-            // Animación sutil de click (hundimiento)
-            imgElement.classList.remove('tap-effect'); // Reset por si acaso
-            void imgElement.offsetWidth; // Trigger reflow
-            imgElement.classList.add('tap-effect');
-            setTimeout(() => imgElement.classList.remove('tap-effect'), 150);
         }
 
         function hideGuides() {
@@ -239,50 +223,39 @@
         }
 
         // ==========================================
-        // LOGICA DE TAP (Cuadrantes)
+        // LÓGICA DE CLIC (CUADRANTES)
         // ==========================================
         container.addEventListener('click', (e) => {
-            hideGuides(); // Ocultar flechas al primer toque
+            hideGuides(); 
 
-            // Obtener dimensiones del contenedor
             const rect = container.getBoundingClientRect();
-            
-            // Posición del click relativa al centro del contenedor
-            // (0,0) es el centro exacto
+            // Coordenadas relativas al centro
             const x = e.clientX - rect.left - (rect.width / 2);
             const y = e.clientY - rect.top - (rect.height / 2);
 
             let moved = false;
 
-            // MATEMÁTICA DE CUADRANTES
-            // Si el valor absoluto de X es mayor que el de Y, estamos en los lados (Izq/Der)
-            // Si el valor absoluto de Y es mayor que el de X, estamos arriba o abajo.
-            
             if (Math.abs(x) > Math.abs(y)) {
-                // --- EJE HORIZONTAL ---
-                if (x > 0) {
-                    // Derecha -> Siguiente Foto (Giro horario)
+                // --- HORIZONTAL ---
+                if (x > 0) { // Derecha
                     if (state.currentX > 0) { 
                         updateImageDOM(state.currentX - 1, state.currentY); 
                         moved = true; 
                     }
-                } else {
-                    // Izquierda -> Foto Anterior (Giro anti-horario)
+                } else { // Izquierda
                     if (state.currentX < config.totalX - 1) { 
                         updateImageDOM(state.currentX + 1, state.currentY); 
                         moved = true; 
                     }
                 }
             } else {
-                // --- EJE VERTICAL ---
-                if (y > 0) {
-                    // Abajo -> Bajar vista
+                // --- VERTICAL ---
+                if (y > 0) { // Abajo
                     if (state.currentY < config.totalY - 1) { 
                         updateImageDOM(state.currentX, state.currentY + 1); 
                         moved = true; 
                     }
-                } else {
-                    // Arriba -> Subir vista
+                } else { // Arriba
                     if (state.currentY > 0) { 
                         updateImageDOM(state.currentX, state.currentY - 1); 
                         moved = true; 
@@ -290,13 +263,12 @@
                 }
             }
 
-            if (moved) {
-                triggerSuccessFeedback();
-            } else {
+            // Si NO se movió (porque llegó al límite), mostramos el feedback de borde.
+            // Si SÍ se movió, no hacemos nada extra, solo se carga la imagen nueva.
+            if (!moved) {
                 triggerEdgeFeedback();
             }
         });
-
 
         // ==========================================
         // MODO DEMO
@@ -315,19 +287,18 @@
             ctx.fillStyle = "#111"; ctx.fillRect(0,0,w,h);
             ctx.save(); ctx.translate(w/2, h/2);
             if(imgElement.classList.contains('at-edge')) ctx.scale(1.02, 1.02);
-            if(imgElement.classList.contains('tap-effect')) ctx.scale(0.98, 0.98);
             ctx.scale(1.56, 1); 
             const rotX = (x - 8) * 15; const rotY = (y - 8) * 10;
             ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; 
             ctx.strokeRect(-100 + rotX, -100 + rotY, 200 - rotX/2, 200 - rotY/2);
             
-            // Dibujar lineas de cuadrantes para guia en demo
+            // Guias visuales en demo
             ctx.beginPath(); ctx.moveTo(-300, -300); ctx.lineTo(300, 300);
             ctx.moveTo(300, -300); ctx.lineTo(-300, 300);
             ctx.strokeStyle = "rgba(255,255,255,0.1)"; ctx.lineWidth = 1; ctx.stroke();
-
+            
             ctx.font = "14px sans-serif"; ctx.fillStyle = "#fff"; ctx.textAlign = "center";
-            ctx.fillText("MODO TAP", 0, -10);
+            ctx.fillText("MODO TAP LIMPIO", 0, -10);
             ctx.restore();
         }
         window.addEventListener('resize', () => { if(demoActive) { demoCanvas.width = container.clientWidth; demoCanvas.height = container.clientHeight; }});
